@@ -43,6 +43,8 @@ def build_permissions() -> list[str]:
         "  - Issues",
         "  - Issue comment",
         "  - Pull request",
+        "  - Pull request review comment",
+        "  - Pull request review",
         "  - Installation",
         "  - Installation repositories",
     ]

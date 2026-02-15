@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import re
 import time
 
 from sqlalchemy import select
@@ -170,10 +171,19 @@ class WebhookProcessor:
                     )
             return
 
-        if event.event_type in {"issue_comment", "pull_request_review_comment"} and event.action == "created":
+        if event.event_type in {"issue_comment", "pull_request_review_comment"} and event.action in {
+            "created",
+            "edited",
+        }:
             if not feature_flags.get("comment_auto_reply", True):
                 return
             await self._process_comment_reply(session, delivery_log, event, feature_flags)
+            return
+
+        if event.event_type == "pull_request_review" and event.action in {"submitted", "edited"}:
+            if not feature_flags.get("comment_auto_reply", True):
+                return
+            await self._process_pull_request_review_reply(session, delivery_log, event, feature_flags)
             return
 
     async def _process_gitlab_event(
@@ -376,6 +386,40 @@ class WebhookProcessor:
                 )
 
             if event.head_sha:
+                review_event = self._review_event_for_result(result)
+                review_body = self._format_inline_review_body(result, review_event)
+                inline_comments: list[dict[str, str | int]] = []
+                try:
+                    pr_files = await self.github_service.list_pull_request_files(
+                        repository_full_name=event.repository_full_name,
+                        pr_number=event.pr_number,
+                        installation_id=event.installation_id,
+                    )
+                    inline_comments = self._build_inline_review_comments(pr_files, result)
+                except Exception:
+                    logger.exception(
+                        "Failed preparing inline PR review comments for %s#%s",
+                        event.repository_full_name,
+                        event.pr_number,
+                    )
+                try:
+                    await self.github_service.submit_pull_request_review(
+                        repository_full_name=event.repository_full_name,
+                        pr_number=event.pr_number,
+                        installation_id=event.installation_id,
+                        commit_id=event.head_sha,
+                        body=review_body,
+                        event=review_event,
+                        comments=inline_comments,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed submitting PR review for %s#%s",
+                        event.repository_full_name,
+                        event.pr_number,
+                    )
+
+            if event.head_sha:
                 try:
                     await self.github_service.create_or_update_check_run(
                         repository_full_name=event.repository_full_name,
@@ -496,3 +540,185 @@ class WebhookProcessor:
             f"Files summarized: {file_count}\n"
             f"Suggestions: {len(result.suggestions)}"
         )
+
+    @staticmethod
+    def _review_event_for_result(result) -> str:
+        has_high_suggestion = any(s.severity == "high" for s in result.suggestions)
+        has_high_risk_file = any(f.risk == "high" for f in result.file_summaries)
+        if result.score_card.overall <= 6.4 or has_high_suggestion or has_high_risk_file:
+            return "REQUEST_CHANGES"
+        return "COMMENT"
+
+    @staticmethod
+    def _format_inline_review_body(result, review_event: str) -> str:
+        marker = "<!-- fossmate:pr-inline-review -->"
+        title = "Requesting changes" if review_event == "REQUEST_CHANGES" else "Review notes"
+        return (
+            f"{marker}\n\n"
+            f"### FOSSMate {title}\n"
+            f"Category: `{result.category}`\n"
+            f"Advisory score: `{result.score_card.overall}/10`\n"
+            "Inline comments below highlight concrete review points."
+        )
+
+    def _build_inline_review_comments(
+        self,
+        pr_files: list[dict[str, object]],
+        result,
+    ) -> list[dict[str, str | int]]:
+        comments: list[dict[str, str | int]] = []
+        file_index = {
+            str(item.get("filename")): item
+            for item in pr_files
+            if isinstance(item, dict) and item.get("filename")
+        }
+
+        used_paths: set[str] = set()
+
+        for suggestion in result.suggestions:
+            path = (suggestion.file_path or "").strip()
+            if not path or path in used_paths:
+                continue
+            file_obj = file_index.get(path)
+            if not file_obj:
+                continue
+            line = self._first_addition_line(str(file_obj.get("patch", "")))
+            if line is None:
+                continue
+            comments.append(
+                {
+                    "path": path,
+                    "line": line,
+                    "side": "RIGHT",
+                    "body": f"{suggestion.title}: {suggestion.details}",
+                }
+            )
+            used_paths.add(path)
+            if len(comments) >= 6:
+                return comments
+
+        for file_summary in result.file_summaries:
+            if file_summary.risk == "low":
+                continue
+            path = file_summary.path
+            if not path or path in used_paths:
+                continue
+            file_obj = file_index.get(path)
+            if not file_obj:
+                continue
+            line = self._first_addition_line(str(file_obj.get("patch", "")))
+            if line is None:
+                continue
+            comments.append(
+                {
+                    "path": path,
+                    "line": line,
+                    "side": "RIGHT",
+                    "body": (
+                        f"Risk flagged as {file_summary.risk}. "
+                        "Please validate edge cases, tests, and error handling for this change."
+                    ),
+                }
+            )
+            used_paths.add(path)
+            if len(comments) >= 6:
+                return comments
+
+        return comments
+
+    @staticmethod
+    def _first_addition_line(patch: str) -> int | None:
+        if not patch:
+            return None
+
+        new_line = 0
+        for raw_line in patch.splitlines():
+            if raw_line.startswith("@@"):
+                match = re.search(r"\+(\d+)(?:,\d+)?", raw_line)
+                if not match:
+                    continue
+                new_line = int(match.group(1))
+                continue
+            if raw_line.startswith("+") and not raw_line.startswith("+++"):
+                return new_line
+            if raw_line.startswith(" "):
+                new_line += 1
+                continue
+            if raw_line.startswith("-") and not raw_line.startswith("---"):
+                continue
+        return None
+
+    async def _process_pull_request_review_reply(
+        self,
+        session: AsyncSession,
+        delivery_log: DeliveryLog,
+        event: NormalizedEvent,
+        feature_flags: dict[str, bool],
+    ) -> None:
+        review = event.payload.get("review", {})
+        sender = event.payload.get("sender", {})
+        review_body = str(review.get("body", "")).strip()
+        review_id = review.get("id")
+        sender_login = str(sender.get("login", "")).strip()
+        sender_type = str(sender.get("type", "")).strip().lower()
+
+        if not review_body:
+            return
+        if sender_type == "bot" or sender_login.endswith("[bot]"):
+            return
+        if "<!-- fossmate:" in review_body.lower():
+            return
+
+        assistant_handle = self.settings.assistant_handle
+        reply_all_comments = feature_flags.get("comment_reply_all", True)
+        should_reply = reply_all_comments or self.review_service.is_assistant_mention(
+            comment_text=review_body,
+            assistant_handle=assistant_handle,
+        )
+        if not should_reply:
+            return
+
+        target_issue_number = event.pr_number or event.issue_number
+        if not event.installation_id or not event.repository_full_name or not target_issue_number:
+            return
+
+        reply = await self.review_service.answer_issue_comment(
+            event=event,
+            comment_text=review_body,
+            assistant_handle=assistant_handle,
+        )
+        marker = (
+            f"<!-- fossmate:review-reply:{review_id} -->"
+            if review_id
+            else "<!-- fossmate:review-reply -->"
+        )
+
+        await self._record_non_pr_run(
+            session=session,
+            delivery_log_id=delivery_log.id,
+            event=event,
+            run_type="pr_review_assistant",
+            status="done",
+            result_json={
+                "reply": reply,
+                "source_review_id": review_id,
+                "sender_login": sender_login,
+                "reply_all_comments": reply_all_comments,
+                "assistant_handle": assistant_handle,
+            },
+        )
+
+        try:
+            await self.github_service.upsert_issue_comment(
+                repository_full_name=event.repository_full_name,
+                issue_number=target_issue_number,
+                installation_id=event.installation_id,
+                body=reply,
+                marker=marker,
+            )
+        except Exception:
+            logger.exception(
+                "Failed posting automated review-body reply for %s#%s",
+                event.repository_full_name,
+                target_issue_number,
+            )
