@@ -54,6 +54,9 @@ Notes:
 
 In GitHub App settings, set:
 
+App link for installation flow:
+- https://github.com/apps/fossmate
+
 Webhook:
 - URL: `https://<your-public-domain>/webhooks/github`
 - Secret: exactly `GITHUB_WEBHOOK_SECRET`
@@ -69,6 +72,8 @@ Subscribe to events:
 - Issues
 - Issue comment
 - Pull request
+- Pull request review comment
+- Pull request review
 - Installation
 - Installation repositories
 

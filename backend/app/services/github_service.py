@@ -192,6 +192,42 @@ class GitHubService:
                 )
                 return
 
+    async def submit_pull_request_review(
+        self,
+        repository_full_name: str,
+        pr_number: int,
+        installation_id: int,
+        commit_id: str,
+        body: str,
+        event: str,
+        comments: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Submit a PR review with optional inline line comments."""
+        token = await self.auth.get_installation_token(installation_id)
+        headers = self._build_headers(token)
+        url = f"https://api.github.com/repos/{repository_full_name}/pulls/{pr_number}/reviews"
+
+        payload: dict[str, Any] = {
+            "commit_id": commit_id,
+            "body": body,
+            "event": event,
+        }
+        if comments:
+            payload["comments"] = comments
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code >= 400:
+                logger.warning(
+                    "Unable to submit PR review repository=%s pr=%s event=%s status=%s body=%s",
+                    repository_full_name,
+                    pr_number,
+                    event,
+                    response.status_code,
+                    response.text[:500],
+                )
+                return
+
     async def add_issue_labels(
         self,
         repository_full_name: str,

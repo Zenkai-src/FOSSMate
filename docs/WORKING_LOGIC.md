@@ -40,11 +40,25 @@ flowchart TD
 4. Post issue summary comment with suggested labels.
 5. Persist result metadata in `review_runs`.
 
-### `issue_comment.created`
-1. Detect onboarding intent phrases.
-2. Generate onboarding response.
-3. Post onboarding comment.
-4. Persist onboarding run result.
+### `issue_comment.created` / `issue_comment.edited`
+1. Detect whether comment should trigger assistant:
+  - `@fossmate` mention, or
+  - auto-reply-all mode enabled.
+2. If onboarding intent is detected, generate onboarding reply.
+3. Otherwise, generate assistant answer from issue/PR context.
+4. Post reply comment with id-linked marker.
+5. Persist run result metadata.
+
+### `pull_request_review_comment.created` / `.edited`
+1. Apply same assistant trigger logic as issue comments.
+2. Generate contextual assistant response.
+3. Post reply into PR thread and persist run result.
+
+### `pull_request_review.submitted` / `.edited`
+1. Read review body text.
+2. Trigger assistant response on mention or auto-reply-all.
+3. Post assistant response in PR thread.
+4. Persist run result.
 
 ### `pull_request.opened` / `pull_request.synchronize`
 1. Fetch changed files from GitHub API.
@@ -52,8 +66,12 @@ flowchart TD
 3. Generate review suggestions (experimental).
 4. Compute advisory score card.
 5. Persist run, findings, and score rows.
-6. Upsert PR review comment.
-7. Create Check Run (if app has `Checks: Read and write`).
+6. Upsert PR summary comment.
+7. Submit PR review object:
+  - `COMMENT` for normal risk
+  - `REQUEST_CHANGES` when high-risk/high-severity conditions hit
+  - includes inline line comments where mappable from diff patches
+8. Create Check Run (if app has `Checks: Read and write`).
 
 ## 4. Idempotency and Duplicate Delivery Handling
 
@@ -106,7 +124,7 @@ Fallback behavior:
 
 ## 8. Why Things Fail (Most Common)
 
-403 on comments/labels:
+403 on comments/labels/reviews:
 - app not installed on repo
 - missing Issues/Pull requests write permissions
 - PAT fallback token missing required scopes
