@@ -4,14 +4,14 @@
 
 Build an installable, self-hostable AI maintainer assistant where the core workflow does not require proprietary APIs.
 
-## Phase 1: Foundation (Current)
+## Phase 1: Foundation (Completed)
 
 - FastAPI scaffold
 - Webhook verification + persistence
 - Provider abstraction
 - Async DB layer
 
-## Phase 2: OSS-Core Automation
+## Phase 2: OSS-Core Automation (Current)
 
 - `issues.opened`: summary + label suggestion
 - `issue_comment.created`: onboarding intent replies
