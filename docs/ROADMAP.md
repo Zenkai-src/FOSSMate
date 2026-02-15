@@ -10,15 +10,15 @@ Build an installable, self-hostable AI maintainer assistant where the core workf
 - Webhook verification + persistence
 - Provider abstraction
 - Async DB layer
+- 
 
-## Phase 2: OSS-Core Automation (Current)
+## Phase 2: OSS-Core Automation (Completed)
 
-- `issues.opened`: summary + label suggestion
 - `issue_comment.created`: onboarding intent replies
 - `pull_request.opened`: PR summary
 - Ollama/local model baseline prompts
 
-## Phase 3: OSS RAG Pipeline
+## Phase 3: OSS RAG Pipeline (Current)
 
 - Repo ingestion (`.py`, `.js`, `.ts`, `.md`, README, CONTRIBUTING)
 - Smart chunking
