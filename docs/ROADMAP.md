@@ -4,21 +4,21 @@
 
 Build an installable, self-hostable AI maintainer assistant where the core workflow does not require proprietary APIs.
 
-## Phase 1: Foundation (Current)
+## Phase 1: Foundation (Completed)
 
 - FastAPI scaffold
 - Webhook verification + persistence
 - Provider abstraction
 - Async DB layer
+- 
 
-## Phase 2: OSS-Core Automation
+## Phase 2: OSS-Core Automation (Completed)
 
-- `issues.opened`: summary + label suggestion
 - `issue_comment.created`: onboarding intent replies
 - `pull_request.opened`: PR summary
 - Ollama/local model baseline prompts
 
-## Phase 3: OSS RAG Pipeline
+## Phase 3: OSS RAG Pipeline (Current)
 
 - Repo ingestion (`.py`, `.js`, `.ts`, `.md`, README, CONTRIBUTING)
 - Smart chunking
